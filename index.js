@@ -61,6 +61,40 @@ async function run() {
 
 
 
+    app.patch("/publicHabits/:id/markComplete", async (req, res) => {
+  const { id } = req.params;
+  const { userEmail } = req.body; // sender's email
+  const today = new Date().toISOString().split("T")[0];
+
+  try {
+    const habit = await habitCollection.findOne({ _id: new ObjectId(id) });
+    if (!habit) return res.status(404).send({ message: "Habit not found" });
+
+    const completionHistory = habit.completionHistory || [];
+    const alreadyCompletedToday = completionHistory.some(
+      (entry) => entry.date === today
+    );
+
+    if (alreadyCompletedToday) {
+      return res.status(400).send({ message: "Already marked complete today" });
+    }
+
+    const updatedHistory = [...completionHistory, { date: today, userEmail }];
+    const result = await habitCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { completionHistory: updatedHistory } }
+    );
+
+    res.send({ message: "Marked complete", completionHistory: updatedHistory });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to mark complete", error: err });
+  }
+});
+
+
+
+
    // post users
     app.post('/users', async (req, res) => {
       const user = req.body;
@@ -113,6 +147,24 @@ app.post('/myhabit', async (req, res) => {
       }
     });
 
+    // Add new habit to public-habits collection
+app.post('/publicHabits', async (req, res) => {
+  try {
+    const habit = req.body;
+
+    if (!habit.habitName || !habit.creatorName) {
+      return res.status(400).send({ message: "Habit name and creator required" });
+    }
+
+    const result = await habitCollection.insertOne(habit);
+    res.send({ message: "Habit added to public-habits successfully", insertedId: result.insertedId });
+  } catch (error) {
+    console.error("Error adding habit to public-habits:", error);
+    res.status(500).send({ message: "Failed to add habit", error });
+  }
+});
+
+
 
     app.get("/myhabit", async (req, res) => {
   const email = req.query.userEmail;
@@ -146,6 +198,43 @@ app.delete("/myhabit/:id", async (req, res) => {
     res.status(500).send({ message: "Failed to delete habit", error });
   }
 });
+
+
+
+// get single myhabit
+app.get("/myhabit/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const habit = await myHabitCollection.findOne({ _id: new ObjectId(id) });
+    if (!habit) return res.status(404).send({ message: "Habit not found" });
+    res.send(habit);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to fetch habit" });
+  }
+});
+
+
+
+//update habit
+app.patch("/myhabit/:id", async (req, res) => {
+  const id = req.params.id;
+  const updates = req.body;
+
+  try {
+    const result = await myHabitCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updates }
+    );
+
+
+    res.send({ message: "Habit partially updated successfully" });
+  } catch (error) {
+    console.error("Error updating habit:", error);
+    res.status(500).send({ message: "Failed to update habit", error });
+  }
+});
+
 
 
 
