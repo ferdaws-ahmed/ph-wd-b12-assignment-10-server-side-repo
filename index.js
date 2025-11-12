@@ -130,6 +130,26 @@ app.post('/myhabit', async (req, res) => {
   }
 });
 
+
+
+// Delete habit by ID
+app.delete("/myhabit/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const result = await myHabitCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Habit not found" });
+    }
+    res.send({ message: "Habit deleted successfully", deletedId: id });
+  } catch (error) {
+    console.error("Error deleting habit:", error);
+    res.status(500).send({ message: "Failed to delete habit", error });
+  }
+});
+
+
+
+
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
