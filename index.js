@@ -61,36 +61,122 @@ async function run() {
 
 
 
-    app.patch("/publicHabits/:id/markComplete", async (req, res) => {
+// public -> myhabit sync when marking complete
+app.patch("/publicHabits/:id/markComplete", async (req, res) => {
   const { id } = req.params;
-  const { userEmail } = req.body; // sender's email
+  const { userEmail } = req.body;
   const today = new Date().toISOString().split("T")[0];
 
   try {
-    const habit = await habitCollection.findOne({ _id: new ObjectId(id) });
-    if (!habit) return res.status(404).send({ message: "Habit not found" });
+    const publicHabit = await habitCollection.findOne({ _id: new ObjectId(id) });
+    if (!publicHabit) return res.status(404).send({ message: "Habit not found" });
 
-    const completionHistory = habit.completionHistory || [];
-    const alreadyCompletedToday = completionHistory.some(
-      (entry) => entry.date === today
-    );
-
-    if (alreadyCompletedToday) {
+    const completionHistory = publicHabit.completionHistory || [];
+    if (completionHistory.some(e => e.date === today && e.userEmail === userEmail)) {
       return res.status(400).send({ message: "Already marked complete today" });
     }
 
-    const updatedHistory = [...completionHistory, { date: today, userEmail }];
-    const result = await habitCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { completionHistory: updatedHistory } }
+    const newEntry = { date: today, userEmail };
+
+    // push into public-habits
+    await habitCollection.updateOne(
+      { _id: publicHabit._id },
+      { $push: { completionHistory: newEntry } }
     );
 
-    res.send({ message: "Marked complete", completionHistory: updatedHistory });
+ 
+    await myHabitCollection.updateMany(
+      { publicHabitId: publicHabit._id },
+      { $push: { completionHistory: newEntry } }
+    );
+
+  
+    const updatedPublic = await habitCollection.findOne({ _id: publicHabit._id });
+
+    res.send({
+      message: "Marked complete and synced to linked MyHabits",
+      completionHistory: updatedPublic.completionHistory || []
+    });
+  } catch (err) {
+    console.error("public markComplete error:", err);
+    res.status(500).send({ message: "Failed to mark complete", error: err.message || err });
+  }
+});
+
+
+
+app.patch("/publicHabits/:id", async (req, res) => {
+  const id = req.params.id;
+  const updates = req.body;
+
+  try {
+    const publicHabit = await habitCollection.findOne({ _id: new ObjectId(id) });
+    if (!publicHabit) return res.status(404).send({ message: "Public habit not found" });
+
+  
+    await habitCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updates }
+    );
+
+    
+    await myHabitCollection.updateMany(
+      { publicHabitId: publicHabit._id },
+      { $set: updates }
+    );
+
+    res.send({ message: "Updated in PublicHabits (and synced to MyHabit where linked)" });
+  } catch (error) {
+    console.error("Error updating PublicHabit:", error);
+    res.status(500).send({ message: "Update failed", error });
+  }
+});
+
+
+
+
+
+
+
+app.patch("/syncMarkComplete/:id", async (req, res) => {
+  const { id } = req.params;
+  const { userEmail } = req.body;
+  const today = new Date().toISOString().split("T")[0];
+
+  try {
+    const myHabit = await myHabitCollection.findOne({ _id: new ObjectId(id) });
+    if (!myHabit) return res.status(404).send({ message: "MyHabit not found" });
+
+    const alreadyDone = myHabit.completionHistory?.some(entry => entry.date === today);
+    if (alreadyDone) return res.status(400).send({ message: "Already marked today" });
+
+    const newEntry = { userEmail, date: today };
+
+    //  MyHabit update
+    await myHabitCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $push: { completionHistory: newEntry } }
+    );
+
+    //  PublicHabit update if linked
+    if (myHabit.publicHabitId) {
+      await habitCollection.updateOne(
+        { _id: new ObjectId(myHabit.publicHabitId) },
+        { $push: { completionHistory: newEntry } }
+      );
+    }
+
+    //  Full updated MyHabit object fetch করে return
+    const updatedHabit = await myHabitCollection.findOne({ _id: new ObjectId(id) });
+
+    res.send(updatedHabit);  // ⚠ এখানে full habit object পাঠানো হচ্ছে
   } catch (err) {
     console.error(err);
     res.status(500).send({ message: "Failed to mark complete", error: err });
   }
 });
+
+
 
 
 
@@ -130,22 +216,30 @@ app.get("/featuresHabit", async (req, res) => {
   }
 });
 
-
+// Add a new habit (auto-link to public-habits if same name exists)
 app.post('/myhabit', async (req, res) => {
-      try {
-        const habit = req.body;
+  try {
+    const habit = req.body;
 
-        if (!habit.habitName || !habit.userEmail) {
-          return res.status(400).send({ message: "Habit name and user email required" });
-        }
+    if (!habit.habitName || !habit.userEmail) {
+      return res.status(400).send({ message: "Habit name and user email required" });
+    }
 
-        const result = await myHabitCollection.insertOne(habit);
-        res.send({ message: "Habit added successfully", insertedId: result.insertedId });
-      } catch (error) {
-        console.error("Error adding habit:", error);
-        res.status(500).send({ message: "Failed to add habit", error });
-      }
-    });
+    // 🔹 Try to link automatically if the name matches a public habit
+    const existingPublic = await habitCollection.findOne({ habitName: habit.habitName });
+    if (existingPublic) {
+      habit.publicHabitId = existingPublic._id;
+    }
+
+    const result = await myHabitCollection.insertOne(habit);
+    res.send({ message: "Habit added successfully", insertedId: result.insertedId });
+  } catch (error) {
+    console.error("Error adding habit:", error);
+    res.status(500).send({ message: "Failed to add habit", error });
+  }
+});
+
+
 
     // Add new habit to public-habits collection
 app.post('/publicHabits', async (req, res) => {
@@ -215,25 +309,36 @@ app.get("/myhabit/:id", async (req, res) => {
 });
 
 
-
-//update habit
 app.patch("/myhabit/:id", async (req, res) => {
   const id = req.params.id;
   const updates = req.body;
 
   try {
-    const result = await myHabitCollection.updateOne(
+    const habit = await myHabitCollection.findOne({ _id: new ObjectId(id) });
+    if (!habit) return res.status(404).send({ message: "Habit not found" });
+
+    await myHabitCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: updates }
     );
 
+    if (habit.publicHabitId) {
+      await habitCollection.updateOne(
+        { _id: new ObjectId(habit.publicHabitId) },
+        { $set: updates }
+      );
+    }
 
-    res.send({ message: "Habit partially updated successfully" });
+    const updatedHabit = await myHabitCollection.findOne({ _id: new ObjectId(id) });
+    res.send(updatedHabit);
   } catch (error) {
     console.error("Error updating habit:", error);
     res.status(500).send({ message: "Failed to update habit", error });
   }
 });
+
+
+
 
 
 
