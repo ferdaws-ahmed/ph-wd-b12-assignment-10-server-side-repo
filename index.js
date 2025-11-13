@@ -37,12 +37,15 @@ async function run() {
 
 
 
-    app.get('/publicHabits', async(req, res)=>{
-      
-      const result = await habitCollection.find().toArray();
-      
-      res.send(result)
-    })
+    app.get('/publicHabits', async (req, res) => {
+  try {
+    const result = await habitCollection.find().toArray();
+    res.send(result);
+  } catch (error) {
+    console.error("Error fetching public habits:", error);
+    res.status(500).send({ message: "Failed to fetch public habits", error });
+  }
+});
 
 
 
@@ -363,3 +366,4 @@ app.get('/', (req, res) => {
   res.send('Hello World!')
 })
 
+module.exports = app;
